@@ -13,6 +13,14 @@ streamlit run app.py
 
 Keep `app.py`, `utils/`, `views/`, `assets/`, `.streamlit/` and `MASTER_STREAMLIT_MULTILEVEL.xlsx` in the same folder.
 
+The one-screen layout needs Streamlit 1.50 or newer (charts use `height="stretch"`). If an older version is installed, run `pip install -U streamlit`.
+
+## Layout
+
+Each page fits one browser screen on laptops and desktops, with no page scroll: a slim header, a KPI strip and a grid of equal-height cards whose charts stretch to fill them. Every interpretation box uses one flat green tint and sits at the bottom of its card, so boxes in the same row line up. Long interpretations are shortened to a few lines; hover over a box to read the full text. Secondary tables (workbook tables, the all-schools table, robustness checks) open from a button in the header.
+
+Below 1100px wide or 600px tall the cards stack vertically and the page scrolls normally, so the dashboard stays usable on tablets and phones. On screens up to 720px tall the sidebar notes are hidden to keep the sidebar from scrolling.
+
 ## Project structure
 
 ```

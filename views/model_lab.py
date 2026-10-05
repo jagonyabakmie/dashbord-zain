@@ -13,7 +13,7 @@ from utils import interpretations as I
 from utils import styles as S
 from views.common import chart
 
-L1_OPTS = {0: "Exclude", 1: "Fixed", 2: "Fixed + Random slope"}
+L1_OPTS = {0: "Exclude", 1: "Fixed", 2: "Random"}
 L2_OPTS = {0: "Exclude", 1: "Fixed"}
 STATE_COLS = [c for c, *_ in D.L1_PREDICTORS] + [c for c, *_ in D.L2_PREDICTORS]
 
@@ -56,47 +56,17 @@ def render(ctx) -> None:
     cat = D.catalog()
     final_id = D.final_model_id()
     best_id = D.best_model_id()
-    meta = D.readme()
+    n_valid = int((cat["status"] == "VALID").sum())
 
     if "lab_ses_state" not in st.session_state:
         _apply_states(_states_of(final_id))
 
-    S.page_header(
+    S.header_row(
         "Build Your Multilevel Model",
         "Select predictors, compare specifications, and inspect model quality.",
-        kicker="Multilevel Model Laboratory",
-        chips=[f"{len(cat)} precomputed models", f"{int((cat['status'] == 'VALID').sum())} valid · "
-                                                 f"{int((cat['status'] != 'VALID').sum())} singular",
-               "ML estimation for AIC/AICc comparison"],
-        gold_chip=f"Best valid: {best_id}",
-        deco="26j_decorative_circles.png",
+        chips=[f"{len(cat)} precomputed models", f"{n_valid} valid · {len(cat) - n_valid} singular", "ML fits for AIC/AICc"],
+        gold_chip=f"Best valid: {best_id}", deco="26j_decorative_circles.png",
     )
-
-    # ---------------- Controls ----------------
-    with S.card("card_lab_controls"):
-        S.card_head("Specification", "Choose How Each Predictor Enters the Model",
-                    "Random intercept for school is always on. Your choice is matched to a stored model; nothing is re-fitted.",
-                    tone="emerald", pill_icon="tune")
-        b1, b2, b3, _ = st.columns([1.3, 1.3, 1.1, 3])
-        b1.button("Load final model", icon=":material/lock:", on_click=_apply_states, args=(_states_of(final_id),),
-                  width="stretch")
-        b2.button("Load best valid model", icon=":material/emoji_events:", on_click=_apply_states,
-                  args=(_states_of(best_id),), width="stretch")
-        b3.button("Null model", icon=":material/restart_alt:", on_click=_apply_states,
-                  args=({c: 0 for c in STATE_COLS},), width="stretch")
-        st.markdown('<div class="card-sub" style="margin-top:.6rem"><b>Level 1 · student predictors</b></div>',
-                    unsafe_allow_html=True)
-        cols = st.columns(2) * 2
-        for colw, (sc, term, _, label) in zip(cols, D.L1_PREDICTORS):
-            with colw:
-                st.segmented_control(label, list(L1_OPTS), format_func=lambda v: L1_OPTS[v], key=f"lab_{sc}",
-                                     required=True)
-        st.markdown('<div class="card-sub"><b>Level 2 · school predictors</b></div>', unsafe_allow_html=True)
-        cols = st.columns(2)
-        for colw, (sc, term, _, label) in zip(cols, D.L2_PREDICTORS):
-            with colw:
-                st.segmented_control(label, list(L2_OPTS), format_func=lambda v: L2_OPTS[v], key=f"lab_{sc}",
-                                     required=True)
 
     states = {c: int(st.session_state.get(f"lab_{c}", 0) or 0) for c in STATE_COLS}
     m = D.find_model(states)
@@ -106,10 +76,9 @@ def render(ctx) -> None:
     mid = m["model_id"]
     is_valid = m["status"] == "VALID"
     warn = m["warnings"] if isinstance(m["warnings"], str) and m["warnings"].strip() else None
-    conv = m["convergence_message"] if isinstance(m["convergence_message"], str) else None
 
-    # ---------------- KPIs + status ----------------
-    rank_txt = f"rank {int(m['AICc_rank_valid'])} of {int((cat['status'] == 'VALID').sum())}" if I.is_finite(m["AICc_rank_valid"]) else "not ranked"
+    rank_txt = f"rank {int(m['AICc_rank_valid'])} of {n_valid}" if I.is_finite(m["AICc_rank_valid"]) else "not ranked"
+    ok_tone = "emerald" if is_valid and not warn else "terra"
     S.kpi_strip([
         dict(label="Model ID", value=mid, icon="fingerprint", tone="forest",
              sub="Final model" if mid == final_id else ("Best valid" if mid == best_id else f"{int(m['npar'])} parameters")),
@@ -126,32 +95,51 @@ def render(ctx) -> None:
         dict(label="Conditional R²", value=I.num(m["R2_conditional"], 3), icon="donut_small", tone="mint",
              help="Variance explained by fixed + random effects. Not available for singular fits."),
         dict(label="ICC", value=I.num(m["ICC"], 3), icon="apartment", tone="slate",
-             help="Adjusted intraclass correlation of this model (share of residual variance at school level). Not available for singular fits."),
-        dict(label="Status", value=m["status"], icon="check_circle" if is_valid and not warn else "warning",
-             tone="emerald" if is_valid and not warn else "terra"),
-    ], cols=5)
+             help="Adjusted intraclass correlation of this model. Not available for singular fits."),
+        dict(label="Status", value=m["status"], icon="check_circle" if ok_tone == "emerald" else "warning", tone=ok_tone,
+             sub="convergence warning" if warn else None),
+    ])
 
-    if is_valid and not warn:
-        st.markdown(f'<div class="status-banner ok">{S.icon("verified")}<div><b>{mid} is a valid fit.</b> '
-                    f'Non-singular, no convergence warning recorded. Formula: <span class="eq">{m["formula"]}</span></div></div>',
-                    unsafe_allow_html=True)
-    else:
-        msgs = []
-        if bool(m["singular"]):
-            msgs.append("<b>Singular fit</b>: at least one random-effect variance or correlation sits at the boundary, so this "
-                        "random structure is not supported by the data. ΔAICc, conditional R² and ICC are not reported.")
-        if warn:
-            msgs.append(f"<b>Convergence warning</b>: {S.esc(warn)}")
-        if conv:
-            msgs.append(f"<b>Convergence message</b>: {S.esc(conv)}")
-        st.markdown(f'<div class="status-banner bad">{S.icon("error")}<div>{"<br/>".join(msgs)}<br/>'
-                    f'Formula: <span class="eq">{m["formula"]}</span></div></div>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([3, 4, 5], gap="small")
+    # ---------------- Controls ----------------
+    with c1, S.card("lab_controls", rows=1):
+        S.card_head("Specification", "Choose the Model", "Random intercept for school is always on; nothing is re-fitted",
+                    tone="emerald", pill_icon="tune")
+        b1, b2, b3 = st.columns(3, gap="small")
+        b1.button("Final", icon=":material/lock:", on_click=_apply_states, args=(_states_of(final_id),), width="stretch",
+                  help=f"Load the locked final model {final_id}")
+        b2.button("Best", icon=":material/emoji_events:", on_click=_apply_states, args=(_states_of(best_id),), width="stretch",
+                  help=f"Load the best valid model by AICc ({best_id})")
+        b3.button("Null", icon=":material/restart_alt:", on_click=_apply_states, args=({c: 0 for c in STATE_COLS},),
+                  width="stretch", help="Intercept-only model")
+        st.markdown('<div class="ctl-label">Level 1 · students</div>', unsafe_allow_html=True)
+        slope_help = "Random = a fixed slope plus a school-specific random slope for this predictor"
+        grid = st.columns(2, gap="small")
+        for i, (sc, term, _, label) in enumerate(D.L1_PREDICTORS):
+            with grid[i % 2]:
+                st.selectbox(label, list(L1_OPTS), format_func=lambda v: L1_OPTS[v], key=f"lab_{sc}", help=slope_help)
+        st.markdown('<div class="ctl-label">Level 2 · schools</div>', unsafe_allow_html=True)
+        grid = st.columns(2, gap="small")
+        for i, (sc, term, _, label) in enumerate(D.L2_PREDICTORS):
+            with grid[i % 2]:
+                st.selectbox(label, list(L2_OPTS), format_func=lambda v: L2_OPTS[v], key=f"lab_{sc}")
+        if is_valid and not warn:
+            st.markdown(f'<div class="status-line ok" title="{S.esc(m["formula"])}">{S.icon("verified")}<div><b>{mid} is a valid fit.</b> '
+                        f'<span class="eq">{S.esc(m["formula"])}</span></div></div>', unsafe_allow_html=True)
+        else:
+            msgs = []
+            if bool(m["singular"]):
+                msgs.append("<b>Singular fit</b>: a random-effect variance or correlation is at the boundary; ΔAICc, "
+                            "conditional R² and ICC are not reported.")
+            if warn:
+                msgs.append(f"<b>Convergence warning</b>: {S.esc(warn)}")
+            st.markdown(f'<div class="status-line bad">{S.icon("error")}<div>{"<br/>".join(msgs)}</div></div>',
+                        unsafe_allow_html=True)
 
-    # ---------------- A. Leaderboard + B. Coefficients ----------------
-    c1, c2 = st.columns([6, 6], gap="medium")
-    with c1, S.card("card_lab_board"):
+    # ---------------- Leaderboard ----------------
+    with c2, S.card("lab_board", rows=1):
         S.card_head("Model Comparison", "Which Model Receives the Strongest Support?",
-                    "Top 15 valid models by ΔAICc · gold = best valid, green = your selection", tone="gold",
+                    "Top 15 valid models by ΔAICc · gold = best valid, dark green = your selection", tone="gold",
                     pill_icon="emoji_events")
         valid = cat[cat["status"] == "VALID"].sort_values("delta_AICc_valid")
         top = valid.head(15)
@@ -161,156 +149,137 @@ def render(ctx) -> None:
         colors = [S.GOLD if r == best_id else (S.FOREST_2 if r == mid else S.MINT) for r in top["model_id"]]
         ylab = [f"{r}{' ★' if r == best_id else ''}{' ◀' if r == mid else ''}" for r in top["model_id"]]
         fig = go.Figure(go.Bar(
-            x=top["delta_AICc_valid"], y=ylab, orientation="h",
-            marker=dict(color=colors, line=dict(color="#FFFFFF", width=1)),
+            x=top["delta_AICc_valid"], y=ylab, orientation="h", marker=dict(color=colors, line=dict(color="#FFFFFF", width=1)),
             customdata=np.stack([top["formula"], top["AICc"], top["R2_marginal"], top["R2_conditional"]], axis=1),
-            text=[f"{v:.1f}" for v in top["delta_AICc_valid"]], textposition="outside", textfont=dict(size=10, color=S.INK_2),
+            text=[f"{v:.1f}" for v in top["delta_AICc_valid"]], textposition="outside", textfont=dict(size=9, color=S.INK_2),
             hovertemplate="<b>%{y}</b><br>ΔAICc = %{x:.2f}<br>AICc = %{customdata[1]:.1f}<br>R²m = %{customdata[2]:.3f} · "
                           "R²c = %{customdata[3]:.3f}<br>%{customdata[0]}<extra></extra>"))
-        C.base_layout(fig, height=440)
-        fig.update_yaxes(autorange="reversed", showgrid=False, tickfont=dict(size=10))
+        C.base_layout(fig)
+        fig.update_layout(margin=dict(l=70))
+        fig.update_yaxes(autorange="reversed", showgrid=False, tickfont=dict(size=9))
         fig.update_xaxes(title_text="ΔAICc (0 = best valid model)", range=[0, top["delta_AICc_valid"].max() * 1.18 + 1])
         chart(fig, "lab_board")
         sec = valid.iloc[1] if len(valid) > 1 else None
-        txt = (f"<b>{best_id}</b> has the lowest AICc among {len(valid)} valid models"
-               + (f"; the runner-up {sec['model_id']} is {sec['delta_AICc_valid']:.1f} AICc units behind, so the support for "
-                  f"{best_id} is {'strong (ΔAICc > 10)' if sec['delta_AICc_valid'] > 10 else 'moderate'}" if sec is not None else "")
-               + ". ")
+        txt = f"<b>{best_id}</b> has the lowest AICc of {len(valid)} valid models"
+        if sec is not None:
+            txt += (f"; the runner-up {sec['model_id']} is {sec['delta_AICc_valid']:.1f} units behind, so support for {best_id} is "
+                    f"{'strong (ΔAICc > 10)' if sec['delta_AICc_valid'] > 10 else 'moderate'}")
+        txt += ". "
         if mid != best_id:
             txt += (f"Your selection {mid} is {I.num(m['delta_AICc_valid'], 1)} units behind." if is_valid
-                    else f"Your selection {mid} is singular and therefore excluded from the ranking.")
-        S.insight(txt)
+                    else f"Your selection {mid} is singular and is not ranked.")
+        S.insight(txt, lines=4)
 
-    with c2, S.card("card_lab_coef"):
-        coefs = D.model_rows(D.S_COEFS, mid)
-        coefs = coefs[coefs["predictor"] != "(Intercept)"].copy()
-        S.card_head("Selected Model", "What Does This Model Estimate?",
-                    f"Fixed-effect coefficients with 95% CI · {mid}", tone="emerald", pill_icon="ssid_chart")
-        scale = st.segmented_control("Scale", ["Standardized β", "Raw estimate"], default="Standardized β",
-                                     key="lab_scale", label_visibility="collapsed") or "Standardized β"
-        if coefs.empty:
-            empty = D.model_rows(D.S_COEFS, mid)
-            icpt = empty["estimate"].iloc[0] if not empty.empty else np.nan
-            S.insight(f"The null model has no predictors; its intercept (grand mean) is <b>{I.num(icpt)}</b>.",
-                      title="No predictors selected", kind="green")
-        else:
-            coefs["label"] = coefs["predictor"].map(D.TERM_LABELS).fillna(coefs["predictor"])
-            ratio = coefs["standardized_beta"] / coefs["estimate"]
-            coefs["s_lo"] = np.minimum(coefs["ci_low"] * ratio, coefs["ci_high"] * ratio)
-            coefs["s_hi"] = np.maximum(coefs["ci_low"] * ratio, coefs["ci_high"] * ratio)
-            coefs["color"] = [S.EMERALD if s else S.NEUTRAL for s in coefs["significant_5pct"]]
-            coefs["hover"] = [f"Raw {e:+.4f} [{lo:.4f}, {hi:.4f}]<br>{I.pval(p)} · df = {d_:.1f}"
-                              for e, lo, hi, p, d_ in zip(coefs["estimate"], coefs["ci_low"], coefs["ci_high"],
-                                                          coefs["p_value"], coefs["df"])]
-            if scale == "Standardized β":
-                coefs = coefs.reindex(coefs["standardized_beta"].abs().sort_values(ascending=False).index)
-                fig = C.forest(coefs, "label", "standardized_beta", "s_lo", "s_hi", color_col="color",
-                               x_title="Standardized β", hover_extra="hover", height=max(250, 58 * len(coefs) + 70))
+    # ---------------- Details (tabs) ----------------
+    with c3, S.card("lab_details", rows=1):
+        S.card_head("Selected Model", f"Inside Model {mid}", "Coefficients, variance structure, fit, equations and diagnostics",
+                    tone="emerald", pill_icon="ssid_chart")
+        t1, t2, t3, t4, t5 = st.tabs(["Coefficients", "Variance", "Fit", "Equations", "Diagnostics"])
+        with t1:
+            coefs_all = D.model_rows(D.S_COEFS, mid)
+            coefs = coefs_all[coefs_all["predictor"] != "(Intercept)"].copy()
+            if coefs.empty:
+                icpt = coefs_all["estimate"].iloc[0] if not coefs_all.empty else np.nan
+                S.insight(f"The null model has no predictors; its intercept (grand mean) is <b>{I.num(icpt)}</b>.",
+                          title="No predictors")
             else:
-                fig = C.forest(coefs, "label", "estimate", "ci_low", "ci_high", color_col="color",
-                               x_title="Raw estimate (points per unit)", hover_extra="hover",
-                               height=max(250, 58 * len(coefs) + 70))
-            chart(fig, "lab_coef")
-            nsig = int(coefs["significant_5pct"].sum())
-            lead = coefs.loc[coefs["standardized_beta"].abs().idxmax()]
-            S.insight(
-                f"{nsig} of {len(coefs)} fixed effects have 95% CIs excluding zero (green; grey = CI includes zero). "
-                f"The largest standardized association is <b>{lead['label']}</b> (β = {lead['standardized_beta']:.3f}). "
-                "Bank models are ML fits for comparison; the locked REML + Kenward-Roger results are on the Research Questions page.",
-                kind="green",
-            )
-        st.download_button("Download coefficients (CSV)", D.model_rows(D.S_COEFS, mid).to_csv(index=False).encode(),
-                           file_name=f"{mid}_coefficients.csv", mime="text/csv", icon=":material/download:")
-
-    # ---------------- C. Variance + D. Observed vs predicted ----------------
-    c3, c4 = st.columns([5, 7], gap="medium")
-    with c3, S.card("card_lab_var"):
-        rnd = D.model_rows(D.S_RANDOM, mid)
-        S.card_head("Random Effects", "How Is the Variance Structured?",
-                    f"Random intercept, random slope and residual variances · {mid}", tone="blue", pill_icon="layers")
-        var = rnd[rnd["term2"].isna()].copy()
-        var["label"] = [("Residual (within)" if g == "Residual" else
-                         ("School intercept" if t == "(Intercept)" else f"Slope: {D.TERM_LABELS.get(t, t)}"))
-                        for g, t in zip(var["group"], var["term1"])]
-        var["color"] = [S.EMERALD if g == "Residual" else (S.GOLD if t == "(Intercept)" else S.BLUE)
-                        for g, t in zip(var["group"], var["term1"])]
-        fig = go.Figure(go.Bar(
-            x=var["variance_or_covariance"], y=var["label"], orientation="h",
-            marker=dict(color=var["color"], line=dict(color="#FFFFFF", width=1)),
-            text=[f"{v:.4f}" for v in var["variance_or_covariance"]], textposition="outside",
-            textfont=dict(size=11, color=S.INK_2),
-            customdata=var["stddev_or_correlation"],
-            hovertemplate="%{y}<br>Variance: %{x:.4f}<br>SD: %{customdata:.4f}<extra></extra>"))
-        C.base_layout(fig, height=max(200, 60 * len(var) + 60))
-        fig.update_yaxes(autorange="reversed", showgrid=False)
-        fig.update_xaxes(title_text="Variance", range=[0, var["variance_or_covariance"].max() * 1.3])
-        chart(fig, "lab_var")
-        cov = rnd[rnd["term2"].notna()]
-        if not cov.empty:
-            cv = cov.assign(Pair=[f"{D.TERM_LABELS.get(a, a)} × {D.TERM_LABELS.get(b, b)}" for a, b in zip(cov["term1"], cov["term2"])])
-            st.dataframe(cv[["Pair", "variance_or_covariance", "stddev_or_correlation"]].rename(
-                columns={"variance_or_covariance": "Covariance", "stddev_or_correlation": "Correlation"}),
-                hide_index=True, width="stretch")
-            if (cov["stddev_or_correlation"].abs() > 0.95).any():
-                S.insight("At least one random-effect correlation is above |0.95|, close to the boundary; interpret the "
-                          "slope–intercept correlation cautiously.", title="Boundary check", kind="warn")
-        icpt = var[var["label"] == "School intercept"]["variance_or_covariance"]
-        resid = var[var["label"] == "Residual (within)"]["variance_or_covariance"]
-        if len(icpt) and len(resid):
-            S.insight(f"School intercept variance {icpt.iloc[0]:.3f} vs residual variance {resid.iloc[0]:.3f}. "
-                      f"{'Slope variances are shown in blue.' if (var['color'] == S.BLUE).any() else 'No random slopes are active.'}",
-                      kind="green")
-
-    with c4, S.card("card_lab_pred"):
-        pr = D.predictions(mid)
-        S.card_head("Model Fit", "How Close Are Predictions to Observed Scores?",
-                    f"Observed vs fitted mathematics score (stored predictions, n = {len(pr)}) · {mid}",
-                    tone="mint", pill_icon="scatter_plot")
-        if pr.empty:
-            S.insight("Predictions for this model are not available in the workbook.", title="Not available", kind="warn")
-        else:
-            lo = min(pr["observed_math"].min(), pr["fitted_math"].min()) - 1
-            hi = max(pr["observed_math"].max(), pr["fitted_math"].max()) + 1
-            fig = go.Figure()
-            fig.add_trace(go.Scattergl(
-                x=pr["fitted_math"], y=pr["observed_math"], mode="markers",
-                marker=dict(size=5, color="rgba(15,138,95,0.45)"),
-                customdata=np.stack([pr["student_id"], pr["school_id"], pr["residual"]], axis=1),
-                hovertemplate="%{customdata[0]} · School %{customdata[1]}<br>Fitted: %{x:.2f}<br>Observed: %{y:.2f}"
-                              "<br>Residual: %{customdata[2]:.2f}<extra></extra>"))
-            fig.add_trace(go.Scatter(x=[lo, hi], y=[lo, hi], mode="lines", line=dict(color=S.GOLD, width=2, dash="dash"),
-                                     hoverinfo="skip"))
-            C.base_layout(fig, height=380)
-            fig.update_xaxes(title_text="Fitted (predicted) mathematics score", range=[lo, hi])
-            fig.update_yaxes(title_text="Observed mathematics score", range=[lo, hi])
-            chart(fig, "lab_pred")
-            rmse = float(np.sqrt(np.mean(pr["residual"] ** 2)))
-            r = I.safe_corr(pr["fitted_math"], pr["observed_math"])
-            S.insight(f"Root mean squared residual is <b>{rmse:.3f}</b> points and the observed–fitted correlation is "
-                      f"{r:.3f}. Points close to the gold diagonal are predicted well; fitted values include the school "
-                      "random effects, so they describe in-sample fit rather than out-of-sample accuracy.")
-
-    # ---------------- Equations + diagnostics ----------------
-    c5, c6 = st.columns([6, 6], gap="medium")
-    with c5, S.card("card_lab_eq"):
-        S.card_head("Equations", "Model Written Out", "Generated from the selected fixed and random specification",
-                    tone="slate", pill_icon="function")
-        eq1, eq2, eq3 = _equations(states)
-        with st.expander("Level 1 equation (students)", expanded=True):
+                scale = st.segmented_control("Scale", ["Standardized β", "Raw estimate"], default="Standardized β",
+                                             key="lab_scale", label_visibility="collapsed") or "Standardized β"
+                coefs["label"] = coefs["predictor"].map(D.TERM_LABELS).fillna(coefs["predictor"])
+                ratio = coefs["standardized_beta"] / coefs["estimate"]
+                coefs["s_lo"] = np.minimum(coefs["ci_low"] * ratio, coefs["ci_high"] * ratio)
+                coefs["s_hi"] = np.maximum(coefs["ci_low"] * ratio, coefs["ci_high"] * ratio)
+                coefs["color"] = [S.EMERALD if s else S.NEUTRAL for s in coefs["significant_5pct"]]
+                coefs["hover"] = [f"Raw {e:+.4f} [{lo:.4f}, {hi:.4f}]<br>{I.pval(p)} · df = {d_:.1f}"
+                                  for e, lo, hi, p, d_ in zip(coefs["estimate"], coefs["ci_low"], coefs["ci_high"],
+                                                              coefs["p_value"], coefs["df"])]
+                if scale == "Standardized β":
+                    coefs = coefs.reindex(coefs["standardized_beta"].abs().sort_values(ascending=False).index)
+                    fig = C.forest(coefs, "label", "standardized_beta", "s_lo", "s_hi", color_col="color",
+                                   x_title="Standardized β", hover_extra="hover")
+                else:
+                    fig = C.forest(coefs, "label", "estimate", "ci_low", "ci_high", color_col="color",
+                                   x_title="Raw estimate (points per unit)", hover_extra="hover")
+                fig.update_layout(margin=dict(l=120))
+                chart(fig, "lab_coef")
+                nsig = int(coefs["significant_5pct"].sum())
+                lead = coefs.loc[coefs["standardized_beta"].abs().idxmax()]
+                S.insight(f"{nsig} of {len(coefs)} fixed effects have 95% CIs excluding zero (green; grey = includes zero). "
+                          f"Largest standardized association: <b>{lead['label']}</b> (β = {lead['standardized_beta']:.3f}). "
+                          "Bank models are ML fits; locked REML results are on the Research Questions page.")
+        with t2:
+            rnd = D.model_rows(D.S_RANDOM, mid)
+            var = rnd[rnd["term2"].isna()].copy()
+            var["label"] = [("Residual (within)" if g == "Residual" else
+                             ("School intercept" if t == "(Intercept)" else f"Slope: {D.TERM_LABELS.get(t, t)}"))
+                            for g, t in zip(var["group"], var["term1"])]
+            var["color"] = [S.EMERALD if g == "Residual" else (S.GOLD if t == "(Intercept)" else S.BLUE)
+                            for g, t in zip(var["group"], var["term1"])]
+            fig = go.Figure(go.Bar(
+                x=var["variance_or_covariance"], y=var["label"], orientation="h",
+                marker=dict(color=var["color"], line=dict(color="#FFFFFF", width=1)),
+                text=[f"{v:.4f}" for v in var["variance_or_covariance"]], textposition="outside", textfont=dict(size=10),
+                customdata=var["stddev_or_correlation"],
+                hovertemplate="%{y}<br>Variance: %{x:.4f}<br>SD: %{customdata:.4f}<extra></extra>"))
+            C.base_layout(fig)
+            fig.update_layout(margin=dict(l=120))
+            fig.update_yaxes(autorange="reversed", showgrid=False)
+            fig.update_xaxes(title_text="Variance", range=[0, var["variance_or_covariance"].max() * 1.3])
+            chart(fig, "lab_var")
+            cov = rnd[rnd["term2"].notna()]
+            icpt = var.loc[var["label"] == "School intercept", "variance_or_covariance"]
+            resid = var.loc[var["label"] == "Residual (within)", "variance_or_covariance"]
+            txt = (f"School intercept variance {icpt.iloc[0]:.3f} vs residual {resid.iloc[0]:.3f}. "
+                   if len(icpt) and len(resid) else "")
+            if not cov.empty:
+                pairs = "; ".join(f"{D.TERM_LABELS.get(a, a)} × {D.TERM_LABELS.get(b, b)}: cov {c_:.3f}, r = {r_:.3f}"
+                                  for a, b, c_, r_ in zip(cov["term1"], cov["term2"], cov["variance_or_covariance"],
+                                                          cov["stddev_or_correlation"]))
+                txt += pairs + ". "
+                if (cov["stddev_or_correlation"].abs() > 0.95).any():
+                    txt += "A random-effect correlation above |0.95| is close to the boundary, so read it cautiously."
+            else:
+                txt += "No random slopes are active."
+            S.insight(txt)
+        with t3:
+            pr = D.predictions(mid)
+            if pr.empty:
+                S.insight("Predictions for this model are not available in the workbook.", title="Not available", kind="warn")
+            else:
+                lo = min(pr["observed_math"].min(), pr["fitted_math"].min()) - 1
+                hi = max(pr["observed_math"].max(), pr["fitted_math"].max()) + 1
+                fig = go.Figure()
+                fig.add_trace(go.Scattergl(
+                    x=pr["fitted_math"], y=pr["observed_math"], mode="markers", marker=dict(size=4, color="rgba(15,138,95,0.45)"),
+                    customdata=np.stack([pr["student_id"], pr["school_id"], pr["residual"]], axis=1),
+                    hovertemplate="%{customdata[0]} · School %{customdata[1]}<br>Fitted: %{x:.2f}<br>Observed: %{y:.2f}"
+                                  "<br>Residual: %{customdata[2]:.2f}<extra></extra>"))
+                fig.add_trace(go.Scatter(x=[lo, hi], y=[lo, hi], mode="lines", line=dict(color=S.GOLD, width=2, dash="dash"),
+                                         hoverinfo="skip"))
+                C.base_layout(fig)
+                fig.update_xaxes(title_text="Fitted math score", range=[lo, hi])
+                fig.update_yaxes(title_text="Observed math score", range=[lo, hi])
+                chart(fig, "lab_pred")
+                rmse = float(np.sqrt(np.mean(pr["residual"] ** 2)))
+                r = I.safe_corr(pr["fitted_math"], pr["observed_math"])
+                S.insight(f"RMS residual <b>{rmse:.3f}</b> points; observed–fitted correlation {r:.3f} (n = {len(pr)}). "
+                          "Fitted values include school random effects, so this is in-sample fit.")
+        with t4:
+            eq1, eq2, eq3 = _equations(states)
+            st.caption("Level 1 (students)")
             st.latex(eq1)
-        with st.expander("Level 2 equations (schools)"):
+            st.caption("Level 2 (schools)")
             st.latex(eq2)
-        with st.expander("Combined equation"):
+            st.caption("Combined")
             st.latex(eq3)
-        st.caption("Predictors are grand-mean centred (ses_c, prior_c, hours_c, facility_c, teacher_c); Female is a 0/1 indicator.")
-
-    with c6, S.card("card_lab_diag"):
-        S.card_head("Diagnostics", "Does This Model Meet Its Assumptions?",
-                    f"Stored diagnostics for {mid}; missing checks are shown as Not available", tone="terra",
-                    pill_icon="health_and_safety")
-        dg = D.model_rows(D.S_DIAG, mid)
-        rd = D.model_rows(D.S_RDIAG, mid)
-        st.markdown(_diag_table(dg.iloc[0] if not dg.empty else None, rd, m), unsafe_allow_html=True)
+            st.caption("Predictors are grand-mean centred; Female is a 0/1 indicator.")
+        with t5:
+            dg = D.model_rows(D.S_DIAG, mid)
+            rd = D.model_rows(D.S_RDIAG, mid)
+            st.markdown(f'<div class="scroll-area">{_diag_table(dg.iloc[0] if not dg.empty else None, rd, m)}</div>',
+                        unsafe_allow_html=True)
+            st.download_button("Coefficients CSV", D.model_rows(D.S_COEFS, mid).to_csv(index=False).encode(),
+                               file_name=f"{mid}_coefficients.csv", mime="text/csv", icon=":material/download:")
 
 
 DIAG_SPEC = [

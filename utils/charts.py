@@ -18,17 +18,17 @@ def base_layout(fig: go.Figure, height: int = 360, legend: bool = False, **kw) -
         height=height,
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Plus Jakarta Sans, Segoe UI, system-ui, sans-serif", size=12, color=S.INK_2),
-        margin=dict(l=64, r=18, t=24, b=56),
+        font=dict(family="Plus Jakarta Sans, Segoe UI, system-ui, sans-serif", size=11, color=S.INK_2),
+        margin=dict(l=44, r=10, t=8, b=34),
         hoverlabel=dict(bgcolor="#FFFFFF", bordercolor="rgba(15,138,95,0.35)",
                         font=dict(family="Plus Jakarta Sans, system-ui, sans-serif", size=12, color=S.INK)),
         showlegend=legend,
-        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1,
-                    bgcolor="rgba(0,0,0,0)", font=dict(size=11, color=S.INK_2)),
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1,
+                    bgcolor="rgba(0,0,0,0)", font=dict(size=10, color=S.INK_2)),
         bargap=0.06,
     )
     axis = dict(automargin=True, gridcolor=S.GRID, zeroline=False, linecolor="rgba(11,61,44,0.18)", ticks="",
-                title_font=dict(size=12, color=S.MUTED), tickfont=dict(size=11, color=S.MUTED))
+                title_font=dict(size=11, color=S.MUTED), tickfont=dict(size=10, color=S.MUTED), title_standoff=6)
     fig.update_xaxes(**axis)
     fig.update_yaxes(**axis)
     if kw:

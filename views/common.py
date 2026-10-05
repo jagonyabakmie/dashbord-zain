@@ -43,9 +43,15 @@ def gender_filtered_students(ctx) -> pd.DataFrame:
 
 
 def empty_note(msg: str) -> None:
-    S.insight(msg, title="Not enough data for this view", kind="warn")
+    S.insight(msg, title="Not enough data", kind="warn")
 
 
 def chart(fig, key: str | None = None) -> None:
+    """Render a chart that stretches to the free height of its card."""
     from utils.charts import CONFIG
-    st.plotly_chart(fig, width="stretch", theme=None, config=CONFIG, key=key)
+    fig.update_layout(height=None, autosize=True)
+    try:
+        st.plotly_chart(fig, width="stretch", height="stretch", theme=None, config=CONFIG, key=key)
+    except TypeError:  # Streamlit without height="stretch": fall back to a fixed height
+        fig.update_layout(height=260)
+        st.plotly_chart(fig, use_container_width=True, theme=None, config=CONFIG, key=key)
